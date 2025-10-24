@@ -80,7 +80,15 @@ stats = {
     'active_allocations': {},  # addr -> size
 }
 
-start_time = time.time()
+# first_event_ts = None
+all_events = []
+
+def get_elapsed_ns(event_ns):
+    global first_event_ts
+    if first_event_ts is None:
+        first_event_ts = event_ns
+
+    return (event_ns - first_event_ts) / 1e9
 
 def print_header():
     print("%-12s %-8s %-18s %-12s %-18s" % 
@@ -89,28 +97,12 @@ def print_header():
 
 def handle_malloc_event(cpu, data, size):
     event = b["malloc_events"].event(data)
-    elapsed = (event.timestamp / 1e9) - start_time
+    all_events.append(("M", event))
     
-    stats['total_allocs'] += 1
-    stats['total_bytes_allocated'] += event.size
-    stats['active_allocations'][event.addr] = event.size
-    
-    print("%-12.6f %-8d %-18s %-12d 0x%-16x" % 
-          (elapsed, event.pid, "MALLOC", event.size, event.addr))
-
 def handle_free_event(cpu, data, size):
     event = b["free_events"].event(data)
-    elapsed = (event.timestamp / 1e9) - start_time
+    all_events.append(("F", event))
     
-    stats['total_frees'] += 1
-    stats['total_bytes_freed'] += event.size
-    
-    if event.addr in stats['active_allocations']:
-        del stats['active_allocations'][event.addr]
-    
-    print("%-12.6f %-8d %-18s %-12d 0x%-16x" % 
-          (elapsed, event.pid, "FREE", event.size, event.addr))
-
 def print_statistics():
     print("\n" + "=" * 80)
     print("STATISTICS")
@@ -129,6 +121,48 @@ def print_statistics():
             print(f"  0x{addr:x}: {size} bytes")
         if len(stats['active_allocations']) > 10:
             print(f"  ... and {len(stats['active_allocations']) - 10} more")
+
+def print_all_events():
+    if not all_events:
+        print("No malloc or free events tracked.")
+        return
+
+    # sort events by timestamp
+    all_events.sort(key = lambda e: e[1].timestamp)
+    first_event_ts = all_events[0][1].timestamp
+
+    print_header()
+
+    # print events
+    for name, ev in all_events:
+        elapsed = (ev.timestamp - first_event_ts) / 1e9
+        if name == "M":
+            stats['total_allocs'] += 1
+            stats['total_bytes_allocated'] += ev.size
+            stats['active_allocations'][ev.addr] = ev.size
+            print("%-12.6f %-8d %-18s %-12d 0x%-16x" %
+                      (elapsed, ev.pid, "MALLOC", ev.size, ev.addr))
+        else:
+            stats['total_frees'] += 1
+            stats['total_bytes_freed'] += ev.size
+            
+            if ev.addr in stats['active_allocations']:
+                del stats['active_allocations'][ev.addr]
+
+            print("%-12.6f %-8d %-18s %-12d 0x%-16x" %
+                      (elapsed, ev.pid, "FREE", ev.size, ev.addr))
+
+    print_statistics()
+
+import os
+
+def is_process_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -179,16 +213,20 @@ def main():
         print(f"Tracing command: {args.command}")
     print("Hit Ctrl-C to end.\n")
     
-    print_header()
     
     # Poll for events
     try:
         while True:
-            b.perf_buffer_poll()
+            b.perf_buffer_poll(timeout=100)
+            if not is_process_alive(args.pid):
+                print("\nTraced process has exited.");
+                break;
     except KeyboardInterrupt:
         print("\n\nDetaching...")
     
-    print_statistics()
+    print_all_events()
+    
+    #print_statistics()
 
 if __name__ == "__main__":
     main()

@@ -99,8 +99,8 @@ int main(int argc, char** argv) {
     printf("This program demonstrates USDT probes for memory profiling\n\n");
     
     // Give time to attach tracer
-    printf("Waiting 3 seconds for tracer to attach...\n");
-    sleep(3);
+    printf("Waiting 5 seconds for tracer to attach...\n");
+    sleep(5);
     
     srand(time(NULL));
     

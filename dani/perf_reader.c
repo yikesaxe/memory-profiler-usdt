@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
 
 struct alloc_event_t {
     __u32 pid;
@@ -14,14 +15,16 @@ struct alloc_event_t {
     __u64 addr;
 };
 
+pid_t target_pid = 174331;
+
 static volatile bool exiting = false;
 
 static void sig_handler(int sig) { exiting = true; }
 
 static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz) {
-    struct alloc_event_t *e = data;
-    printf("[PID %u] malloc %llu bytes at %p (time %llu ns)\n",
-           e->pid, e->size, (void*)e->addr, e->timestamp);
+    //struct alloc_event_t *e = data;
+    //printf("[PID %u] malloc %llu bytes at %p (time %llu ns)\n",
+    //       e->pid, e->size, (void*)e->addr, e->timestamp);
 }
 
 static void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt) {
@@ -46,7 +49,7 @@ int main(int argc, char **argv) {
     if (!prog) return 1;
 
     // Replace 0 with PID of target process if you want specific process
-    link = bpf_program__attach_usdt(prog, 0, "./sample_allocator",
+    link = bpf_program__attach_usdt(prog, target_pid, "./sample_allocator",
                                     "memory_profiler", "malloc_entry", NULL);
     if (libbpf_get_error(link)) return 1;
 
@@ -54,19 +57,27 @@ int main(int argc, char **argv) {
     int map_fd = bpf_map__fd(bpf_object__find_map_by_name(obj, "malloc_events"));
     printf("map_fd=%d\n", map_fd);
 
-    pb = perf_buffer__new(map_fd, 8, handle_event, handle_lost_events, NULL, NULL);
+    pb = perf_buffer__new(map_fd, 64, handle_event, handle_lost_events, NULL, NULL);
     
     if (libbpf_get_error(pb)) return 1;
 
     printf("Listening for malloc events... Press Ctrl+C to exit.\n");
 
     while (!exiting) {
+        // Poll perf buffer
         int err = perf_buffer__poll(pb, 100);
         if (err < 0 && err != -EINTR) {
             fprintf(stderr, "Error polling perf buffer: %d\n", err);
             break;
         }
+
+        // Check if the process is still alive
+        if (kill(target_pid, 0) == -1 && errno == ESRCH) {
+            printf("Target process exited, stopping perf reader.\n");
+            break;
+        }
     }
+
 
     perf_buffer__free(pb);
     bpf_link__destroy(link);

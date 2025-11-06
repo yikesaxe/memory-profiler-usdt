@@ -23,19 +23,14 @@ struct {
 // Track malloc events
 
 SEC("usdt/./sample_allocator:memory_profiler:malloc_entry")
-int BPF_USDT(trace_malloc, size_t size, void *ptr) {
-    __u64 val = 0;
+int BPF_USDT(trace_malloc, u64 size, u64 ptr) {
     struct alloc_event_t event = {};
-    
     event.pid = bpf_get_current_pid_tgid() >> 32;
     event.timestamp = bpf_ktime_get_ns();
-    
-    // Read USDT probe arguments
     event.size = size;
-    event.addr = (u64)ptr;
-    
-    bpf_perf_event_output(ctx, &malloc_events, BPF_F_CURRENT_CPU, &event, sizeof(event));
+    event.addr = ptr;
 
+    bpf_perf_event_output(ctx, &malloc_events, BPF_F_CURRENT_CPU, &event, sizeof(event));
     return 0;
 }
 

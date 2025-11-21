@@ -167,6 +167,34 @@ uint64_t next_sample_interval(void) {
   if (value > max_value) value = max_value;
   return (size_t)value;
 }
+
+size_t djb2_hash(size_t ptr) {
+    size_t hash = 5381;
+    for (long unsigned int i = 0; i < sizeof(size_t); i++) {
+        hash = ((hash << 5) + hash) + ((ptr >> (i * 8)) & 0xFF);
+    }
+    return hash;
+}
+
+size_t sdbm_hash(size_t ptr) {
+    size_t hash = 0;
+    for (long unsigned int i = 0; i < sizeof(size_t); i++) {
+        hash = ((ptr >> (i * 8)) & 0xFF) + (hash << 6) + (hash << 16) - hash;
+    }
+    return hash;
+}
+
+size_t xor_hash(size_t ptr) {
+    // Convert pointer to integer type safely
+
+    size_t hash = ptr;
+
+    hash ^= hash >> 12;         // mix high bits down
+    hash ^= hash << 25;         // mix low bits up
+    hash ^= hash >> 27;         // final diffusion
+
+    return hash;
+}
 /* CHANGE END*/
 
 /* Allocate memory or panic */
@@ -175,7 +203,11 @@ void *zmalloc(size_t size) {
     if (!ptr) zmalloc_oom_handler(size);
     /* CHANGE START*/
     else {
-        int hash_track = ((size_t)ptr & 0xFF) == 0; //C++ hash which just casts
+        int cpp_hash_track = ((size_t)ptr & 0xFF) == 0; //C++ hash which just casts
+        int djb2_hash_track = (djb2_hash((size_t)ptr) & 0xFF) == 0; //djb2 hash
+        int sdbm_hash_track = (sdbm_hash((size_t)ptr) & 0xFF) == 0; //sdbm hash
+        int xor_hash_track = (xor_hash((size_t)ptr) & 0xFF) == 0; //xor hash
+
         int poisson_track = 0;
         uint64_t poisson_size = 0;
 
@@ -185,7 +217,9 @@ void *zmalloc(size_t size) {
             uint64_t sampling_interval = _sampling_interval;
             size_t nsamples = remaining_bytes / sampling_interval;
             do {
-                remaining_bytes -= next_sample_interval();
+                int samp_int = next_sample_interval();
+                printf("%d", samp_int);
+                remaining_bytes -= samp_int;
                 ++nsamples;
             } while (remaining_bytes >= 0);
 
@@ -193,7 +227,7 @@ void *zmalloc(size_t size) {
         }
 
         // Columns: Call, Address, Size, HashTrack, PoissonTrack, PoissonSize
-        printf("zmalloc,%p,%zu,%d,%d,%zu\n", ptr, size, hash_track, poisson_track, poisson_size);
+        printf("zmalloc,%p,%zu,%d,%d,%d,%d,%d,%zu\n", ptr, size, cpp_hash_track, djb2_hash_track, sdbm_hash_track, xor_hash_track, poisson_track, poisson_size);
     }
     /* CHANGE END*/
     return ptr;
@@ -478,6 +512,7 @@ void zfree(void *ptr) {
     update_zmalloc_stat_free(oldsize+PREFIX_SIZE);
     free(realptr);
 #endif
+    printf("zfree,%p\n", ptr); /* CHANGE */
 }
 
 /* Similar to zfree, '*usable' is set to the usable size being freed. */
